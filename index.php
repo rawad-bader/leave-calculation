@@ -1,75 +1,76 @@
 <?php
+header('Content-Type: application/json');
 
-// ================= CONFIG =================
-$BITRIX_WEBHOOK =
-    'https://prue-dubai.bitrix24.ru/rest/1136/5gkcxwvewdstufo/crm.item.update.json';
-
-$ENTITY_TYPE_ID = 1120;
-$FIELD_CODE = 'UF_CRM_30_1767017263547';
-
-// ================= INPUT =================
+/**
+ * 1. Validate input
+ */
 $start = $_GET['start_date'] ?? null;
 $end   = $_GET['end_date'] ?? null;
-$item  = $_GET['item_id'] ?? null;
+$itemId = $_GET['item_id'] ?? null;
 
-if (!$start || !$end || !$item) {
+if (!$start || !$end || !$itemId) {
     http_response_code(400);
-    echo 'Missing parameters';
+    echo json_encode(['error' => 'Missing parameters']);
     exit;
 }
 
-// ================= DATE PARSE =================
-$startDate = DateTime::createFromFormat('d.m.Y', $start);
-$endDate   = DateTime::createFromFormat('d.m.Y', $end);
-
-if (!$startDate || !$endDate) {
-    http_response_code(400);
-    echo 'Invalid date format';
-    exit;
-}
-
-// ================= CALCULATE WORKDAYS =================
+/**
+ * 2. Calculate working days (example logic)
+ */
+$startDate = new DateTime($start);
+$endDate   = new DateTime($end);
 $days = 0;
-$cursor = clone $startDate;
 
-while ($cursor <= $endDate) {
-    if ((int)$cursor->format('N') <= 5) {
+while ($startDate <= $endDate) {
+    $dayOfWeek = $startDate->format('N');
+    if ($dayOfWeek < 6) { // Mon–Fri
         $days++;
     }
-    $cursor->modify('+1 day');
+    $startDate->modify('+1 day');
 }
 
-// ================= BITRIX PAYLOAD =================
-$payload = json_encode([
-    'entityTypeId' => $ENTITY_TYPE_ID,
-    'id' => (int)$item,
+/**
+ * 3. Prepare Bitrix update
+ */
+$BITRIX_WEBHOOK = 'https://prue-dubai.bitrix24.ru/rest/1136/5gkcxxvewdstufo/';
+
+$url = $BITRIX_WEBHOOK . 'crm.item.update.json';
+
+$postData = [
+    'entityTypeId' => 1120,
+    'id' => (int)$itemId,
     'fields' => [
-        $FIELD_CODE => $days
+        'UF_CRM_30_1767017263547' => $days
     ]
-]);
+];
 
-$context = stream_context_create([
-    'http' => [
-        'method'  => 'POST',
-        'header'  => "Content-Type: application/json\r\n",
-        'content' => $payload,
-        'timeout' => 20
-    ]
-]);
+/**
+ * 4. Send POST request (IMPORTANT)
+ */
+$ch = curl_init($url);
+curl_setopt($ch, CURLOPT_POST, true);
+curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($postData));
 
-$response = file_get_contents($BITRIX_WEBHOOK, false, $context);
+$response = curl_exec($ch);
+$httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+curl_close($ch);
 
-// ================= RESULT =================
-if ($response === false) {
-    http_response_code(500);
-    echo 'Bitrix API call failed';
+/**
+ * 5. Handle response
+ */
+if ($httpCode !== 200) {
+    echo json_encode([
+        'status' => 'bitrix_error',
+        'http_code' => $httpCode,
+        'response' => $response
+    ]);
     exit;
 }
 
-header('Content-Type: application/json');
 echo json_encode([
-    'status' => 'OK',
-    'item_id' => (int)$item,
+    'status' => 'success',
     'working_days' => $days,
     'bitrix_response' => json_decode($response, true)
 ]);
