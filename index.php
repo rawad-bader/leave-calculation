@@ -1,95 +1,75 @@
 <?php
-// -------------------------------------------------
-// CONFIG
-// -------------------------------------------------
 
-$BITRIX_WEBHOOK_URL = "https://prue-dubai.bitrix24.ru/rest/1136/5gkcxwvewdstufo/crm.item.update.json";
+// ================= CONFIG =================
+$BITRIX_WEBHOOK =
+    'https://prue-dubai.bitrix24.ru/rest/1136/5gkcxwvewdstufo/crm.item.update.json';
+
 $ENTITY_TYPE_ID = 1120;
-$TARGET_FIELD = "UF_CRM_30_1767017263547";
+$FIELD_CODE = 'UF_CRM_30_1767017263547';
 
-// -------------------------------------------------
-// INPUT VALIDATION
-// -------------------------------------------------
+// ================= INPUT =================
+$start = $_GET['start_date'] ?? null;
+$end   = $_GET['end_date'] ?? null;
+$item  = $_GET['item_id'] ?? null;
 
-$startDate = $_GET['start_date'] ?? null;
-$endDate   = $_GET['end_date'] ?? null;
-$itemId    = $_GET['item_id'] ?? null;
-
-if (!$startDate || !$endDate || !$itemId) {
+if (!$start || !$end || !$item) {
     http_response_code(400);
-    echo "Missing parameters";
+    echo 'Missing parameters';
     exit;
 }
 
-// -------------------------------------------------
-// DATE PARSING (dd.mm.yyyy)
-// -------------------------------------------------
+// ================= DATE PARSE =================
+$startDate = DateTime::createFromFormat('d.m.Y', $start);
+$endDate   = DateTime::createFromFormat('d.m.Y', $end);
 
-$start = DateTime::createFromFormat('d.m.Y', $startDate);
-$end   = DateTime::createFromFormat('d.m.Y', $endDate);
-
-if (!$start || !$end) {
+if (!$startDate || !$endDate) {
     http_response_code(400);
-    echo "Invalid date format";
+    echo 'Invalid date format';
     exit;
 }
 
-// -------------------------------------------------
-// CALCULATE WORKING DAYS (Mon–Fri)
-// -------------------------------------------------
+// ================= CALCULATE WORKDAYS =================
+$days = 0;
+$cursor = clone $startDate;
 
-$workingDays = 0;
-$current = clone $start;
-
-while ($current <= $end) {
-    $dayOfWeek = (int)$current->format('N'); // 1 = Mon, 7 = Sun
-    if ($dayOfWeek <= 5) {
-        $workingDays++;
+while ($cursor <= $endDate) {
+    if ((int)$cursor->format('N') <= 5) {
+        $days++;
     }
-    $current->modify('+1 day');
+    $cursor->modify('+1 day');
 }
 
-// -------------------------------------------------
-// PREPARE BITRIX REQUEST (POST + JSON)
-// -------------------------------------------------
-
-$payload = [
-    "entityTypeId" => $ENTITY_TYPE_ID,
-    "id" => (int)$itemId,
-    "fields" => [
-        $TARGET_FIELD => $workingDays
+// ================= BITRIX PAYLOAD =================
+$payload = json_encode([
+    'entityTypeId' => $ENTITY_TYPE_ID,
+    'id' => (int)$item,
+    'fields' => [
+        $FIELD_CODE => $days
     ]
-];
+]);
 
-$options = [
-    "http" => [
-        "method"  => "POST",
-        "header"  => "Content-Type: application/json",
-        "content" => json_encode($payload),
-        "timeout" => 15
+$context = stream_context_create([
+    'http' => [
+        'method'  => 'POST',
+        'header'  => "Content-Type: application/json\r\n",
+        'content' => $payload,
+        'timeout' => 20
     ]
-];
+]);
 
-$context = stream_context_create($options);
-$response = file_get_contents($BITRIX_WEBHOOK_URL, false, $context);
+$response = file_get_contents($BITRIX_WEBHOOK, false, $context);
 
-// -------------------------------------------------
-// ERROR HANDLING
-// -------------------------------------------------
-
+// ================= RESULT =================
 if ($response === false) {
     http_response_code(500);
-    echo "Bitrix update failed";
+    echo 'Bitrix API call failed';
     exit;
 }
-
-// -------------------------------------------------
-// SUCCESS
-// -------------------------------------------------
 
 header('Content-Type: application/json');
 echo json_encode([
-    "status" => "OK",
-    "item_id" => (int)$itemId,
-    "working_days" => $workingDays
+    'status' => 'OK',
+    'item_id' => (int)$item,
+    'working_days' => $days,
+    'bitrix_response' => json_decode($response, true)
 ]);
