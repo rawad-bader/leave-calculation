@@ -1,51 +1,95 @@
 <?php
+// -------------------------------------------------
+// CONFIG
+// -------------------------------------------------
 
-/* =========================================
-   1. Read parameters sent from Bitrix
-========================================= */
-$start  = $_GET['start_date'] ?? null;
-$end    = $_GET['end_date'] ?? null;
-$itemId = $_GET['item_id'] ?? null;
+$BITRIX_WEBHOOK_URL = "https://prue-dubai.bitrix24.ru/rest/1136/5gkcxwvewdstufo/crm.item.update.json";
+$ENTITY_TYPE_ID = 1120;
+$TARGET_FIELD = "UF_CRM_30_1767017263547";
 
-if (!$start || !$end || !$itemId) {
+// -------------------------------------------------
+// INPUT VALIDATION
+// -------------------------------------------------
+
+$startDate = $_GET['start_date'] ?? null;
+$endDate   = $_GET['end_date'] ?? null;
+$itemId    = $_GET['item_id'] ?? null;
+
+if (!$startDate || !$endDate || !$itemId) {
     http_response_code(400);
-    exit('Missing parameters');
+    echo "Missing parameters";
+    exit;
 }
 
-/* =========================================
-   2. Calculate working days
-   (Saturday & Sunday are weekends)
-========================================= */
-$startDt = new DateTime($start);
-$endDt   = new DateTime($end);
-$endDt->modify('+1 day'); // inclusive
+// -------------------------------------------------
+// DATE PARSING (dd.mm.yyyy)
+// -------------------------------------------------
 
-$period = new DatePeriod($startDt, new DateInterval('P1D'), $endDt);
+$start = DateTime::createFromFormat('d.m.Y', $startDate);
+$end   = DateTime::createFromFormat('d.m.Y', $endDate);
+
+if (!$start || !$end) {
+    http_response_code(400);
+    echo "Invalid date format";
+    exit;
+}
+
+// -------------------------------------------------
+// CALCULATE WORKING DAYS (Mon–Fri)
+// -------------------------------------------------
 
 $workingDays = 0;
-foreach ($period as $day) {
-    if ((int)$day->format('N') < 6) { // 1–5 = Mon–Fri
+$current = clone $start;
+
+while ($current <= $end) {
+    $dayOfWeek = (int)$current->format('N'); // 1 = Mon, 7 = Sun
+    if ($dayOfWeek <= 5) {
         $workingDays++;
     }
+    $current->modify('+1 day');
 }
 
-/* =========================================
-   3. Update Bitrix Leave Request via Inbound Webhook
-========================================= */
-$BITRIX_WEBHOOK = 'https://prue-dubai.bitrix24.ru/rest/1136/5gkcxwvevwdstufo/';
-$ENTITY_TYPE_ID = 1120;
-$FIELD_CODE     = 'UF_CRM_30_1767017263547';
+// -------------------------------------------------
+// PREPARE BITRIX REQUEST (POST + JSON)
+// -------------------------------------------------
 
-$url = $BITRIX_WEBHOOK . 'crm.item.update.json';
-
-$params = [
-    'entityTypeId' => $ENTITY_TYPE_ID,
-    'id' => $itemId,
-    'fields' => [
-        $FIELD_CODE => $workingDays
+$payload = [
+    "entityTypeId" => $ENTITY_TYPE_ID,
+    "id" => (int)$itemId,
+    "fields" => [
+        $TARGET_FIELD => $workingDays
     ]
 ];
 
-file_get_contents($url . '?' . http_build_query($params));
+$options = [
+    "http" => [
+        "method"  => "POST",
+        "header"  => "Content-Type: application/json",
+        "content" => json_encode($payload),
+        "timeout" => 15
+    ]
+];
 
-echo 'OK';
+$context = stream_context_create($options);
+$response = file_get_contents($BITRIX_WEBHOOK_URL, false, $context);
+
+// -------------------------------------------------
+// ERROR HANDLING
+// -------------------------------------------------
+
+if ($response === false) {
+    http_response_code(500);
+    echo "Bitrix update failed";
+    exit;
+}
+
+// -------------------------------------------------
+// SUCCESS
+// -------------------------------------------------
+
+header('Content-Type: application/json');
+echo json_encode([
+    "status" => "OK",
+    "item_id" => (int)$itemId,
+    "working_days" => $workingDays
+]);
