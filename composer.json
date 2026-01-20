@@ -1,0 +1,6 @@
+{
+  "name": "rawad/working-days-api",
+  "description": "Simple PHP API for Bitrix24 working days calculation",
+  "type": "project",
+  "require": {}
+}
