@@ -1,50 +1,51 @@
 <?php
-declare(strict_types=1);
 
-header('Content-Type: application/json; charset=utf-8');
+/* =========================================
+   1. Read parameters sent from Bitrix
+========================================= */
+$start  = $_GET['start_date'] ?? null;
+$end    = $_GET['end_date'] ?? null;
+$itemId = $_GET['item_id'] ?? null;
 
-date_default_timezone_set('UTC'); // change to 'Asia/Dubai' if you want
-
-// Only allow POST
-if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
-    http_response_code(405);
-    echo json_encode(['error' => 'Method not allowed. Use POST.']);
-    exit;
-}
-
-// Read JSON body
-$raw = file_get_contents('php://input');
-$data = json_decode($raw ?: '', true);
-
-$start = $data['START_DATE'] ?? null;
-$end   = $data['END_DATE'] ?? null;
-
-if (!$start || !$end) {
+if (!$start || !$end || !$itemId) {
     http_response_code(400);
-    echo json_encode(['error' => 'START_DATE and END_DATE are required']);
-    exit;
+    exit('Missing parameters');
 }
 
-try {
-    $startDt = new DateTime(substr((string)$start, 0, 10));
-    $endDt   = new DateTime(substr((string)$end, 0, 10));
-} catch (Exception $e) {
-    http_response_code(400);
-    echo json_encode(['error' => 'Invalid date format']);
-    exit;
-}
-
-// Inclusive range
-$endDt->modify('+1 day');
+/* =========================================
+   2. Calculate working days
+   (Saturday & Sunday are weekends)
+========================================= */
+$startDt = new DateTime($start);
+$endDt   = new DateTime($end);
+$endDt->modify('+1 day'); // inclusive
 
 $period = new DatePeriod($startDt, new DateInterval('P1D'), $endDt);
 
 $workingDays = 0;
 foreach ($period as $day) {
-    $dow = (int)$day->format('N'); // 1=Mon ... 6=Sat 7=Sun
-    if ($dow !== 6 && $dow !== 7) { // weekend: Sat+Sun
+    if ((int)$day->format('N') < 6) { // 1–5 = Mon–Fri
         $workingDays++;
     }
 }
 
-echo json_encode(['result' => $workingDays]);
+/* =========================================
+   3. Update Bitrix Leave Request via Inbound Webhook
+========================================= */
+$BITRIX_WEBHOOK = 'https://prue-dubai.bitrix24.ru/rest/1136/5gkcxwvevwdstufo/';
+$ENTITY_TYPE_ID = 1120;
+$FIELD_CODE     = 'UF_CRM_30_1767017263547';
+
+$url = $BITRIX_WEBHOOK . 'crm.item.update.json';
+
+$params = [
+    'entityTypeId' => $ENTITY_TYPE_ID,
+    'id' => $itemId,
+    'fields' => [
+        $FIELD_CODE => $workingDays
+    ]
+];
+
+file_get_contents($url . '?' . http_build_query($params));
+
+echo 'OK';
