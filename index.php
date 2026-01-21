@@ -1,65 +1,76 @@
 <?php
+declare(strict_types=1);
+
 header('Content-Type: application/json');
 
-/**
- * 1. Validate input
- */
+/* ================= CONFIG ================= */
+
+define('BITRIX_WEBHOOK_BASE', 'https://prue-dubai.bitrix24.ru/rest/1136/tnt0k89577f6vfcg');
+define('ENTITY_TYPE_ID', 1120);
+define('FIELD_TOTAL_LEAVE_DAYS', 'UF_CRM_30_1767017263547');
+
+/* ================= INPUT ================= */
+
 $start = $_GET['start_date'] ?? null;
 $end   = $_GET['end_date'] ?? null;
-$itemId = $_GET['item_id'] ?? null;
+$itemId = isset($_GET['item_id']) ? (int)$_GET['item_id'] : 0;
 
-if (!$start || !$end || !$itemId) {
+if (!$start || !$end || $itemId <= 0) {
     http_response_code(400);
-    echo json_encode(['error' => 'Missing parameters']);
+    echo json_encode(['error' => 'Missing or invalid parameters']);
     exit;
 }
 
-/**
- * 2. Calculate working days (example logic)
- */
-$startDate = new DateTime($start);
-$endDate   = new DateTime($end);
-$days = 0;
+/* ================= DATE PARSING ================= */
 
-while ($startDate <= $endDate) {
-    $dayOfWeek = $startDate->format('N');
-    if ($dayOfWeek < 6) { // Mon–Fri
-        $days++;
-    }
-    $startDate->modify('+1 day');
+$startDate = DateTime::createFromFormat('d.m.Y', $start);
+$endDate   = DateTime::createFromFormat('d.m.Y', $end);
+
+if (!$startDate || !$endDate) {
+    http_response_code(400);
+    echo json_encode(['error' => 'Invalid date format. Expected dd.mm.yyyy']);
+    exit;
 }
 
-/**
- * 3. Prepare Bitrix update
- */
-$BITRIX_WEBHOOK = 'https://prue-dubai.bitrix24.ru/rest/1136/5gkcxxvewdstufo/';
+/* ================= WORKING DAYS ================= */
 
-$url = $BITRIX_WEBHOOK . 'crm.item.update.json';
+$workingDays = 0;
+$cursor = clone $startDate;
 
-$postData = [
-    'entityTypeId' => 1120,
-    'id' => (int)$itemId,
+while ($cursor <= $endDate) {
+    if ((int)$cursor->format('N') < 6) {
+        $workingDays++;
+    }
+    $cursor->modify('+1 day');
+}
+
+/* ================= BITRIX REQUEST ================= */
+
+$bitrixUrl = rtrim(BITRIX_WEBHOOK_BASE, '/') . '/crm.item.update.json';
+
+$payload = [
+    'entityTypeId' => ENTITY_TYPE_ID,
+    'id' => $itemId,
     'fields' => [
-        'UF_CRM_30_1767017263547' => $days
+        FIELD_TOTAL_LEAVE_DAYS => $workingDays
     ]
 ];
 
-/**
- * 4. Send POST request (IMPORTANT)
- */
-$ch = curl_init($url);
-curl_setopt($ch, CURLOPT_POST, true);
-curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
-curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($postData));
+$ch = curl_init($bitrixUrl);
+curl_setopt_array($ch, [
+    CURLOPT_POST => true,
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+    CURLOPT_POSTFIELDS => json_encode($payload),
+    CURLOPT_TIMEOUT => 20
+]);
 
 $response = curl_exec($ch);
 $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
 curl_close($ch);
 
-/**
- * 5. Handle response
- */
+/* ================= RESPONSE ================= */
+
 if ($httpCode !== 200) {
     echo json_encode([
         'status' => 'bitrix_error',
@@ -71,6 +82,7 @@ if ($httpCode !== 200) {
 
 echo json_encode([
     'status' => 'success',
-    'working_days' => $days,
+    'item_id' => $itemId,
+    'working_days' => $workingDays,
     'bitrix_response' => json_decode($response, true)
 ]);
