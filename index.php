@@ -8,22 +8,33 @@ header('Content-Type: application/json');
  * CONFIGURATION
  * ==============================
  */
-const BITRIX_WEBHOOK_BASE = 'https://prue-dubai.bitrix24.ru/rest/1136/tnt0k89577f6vfcg/';
+// Ensure this is your dedicated INBOUND webhook URL for writing data back
+const BITRIX_WEBHOOK_BASE = 'https://prue-dubai.bitrix24.ru';
 const ENTITY_TYPE_ID = 1120;
 const TARGET_FIELD = 'UF_CRM_30_1767017263547';
 
 /**
  * ==============================
- * 1. INPUT VALIDATION
+ * 1. INPUT VALIDATION (UPDATED)
  * ==============================
  */
-$startRaw = $_GET['start_date'] ?? null;
-$endRaw   = $_GET['end_date'] ?? null;
-$itemId  = isset($_GET['item_id']) ? (int)$_GET['item_id'] : 0;
+
+// Read the raw POST data sent by the Bitrix24 Outbound Webhook
+$postData = json_decode(file_get_contents('php://input'), true);
+
+// Bitrix wraps parameters in a 'data' object when sending via Outbound Webhook POST
+$params = $postData['data'] ?? [];
+
+$startRaw = $params['start_date'] ?? null;
+$endRaw   = $params['end_date'] ?? null;
+$itemId   = isset($params['item_id']) ? (int)$params['item_id'] : 0;
 
 if (!$startRaw || !$endRaw || $itemId <= 0) {
     http_response_code(400);
-    echo json_encode(['error' => 'Missing or invalid parameters']);
+    echo json_encode([
+        'error' => 'Missing or invalid parameters in POST data',
+        'received_data' => $postData // Helpful for debugging
+    ]);
     exit;
 }
 
@@ -40,7 +51,6 @@ if (!$startDate || !$endDate) {
     echo json_encode(['error' => 'Invalid date format. Expected dd.mm.yyyy']);
     exit;
 }
-
 if ($startDate > $endDate) {
     http_response_code(400);
     echo json_encode(['error' => 'Start date cannot be after end date']);
@@ -109,7 +119,7 @@ curl_close($ch);
 
 /**
  * ==============================
- * 6. RESPONSE HANDLING
+ * 6. RESPONSE HANDLING & SUCCESS
  * ==============================
  */
 $result = json_decode($response, true);
@@ -124,11 +134,6 @@ if ($httpCode !== 200 || isset($result['error'])) {
     exit;
 }
 
-/**
- * ==============================
- * SUCCESS
- * ==============================
- */
 echo json_encode([
     'status'       => 'success',
     'item_id'      => $itemId,
