@@ -11,14 +11,16 @@ header('Content-Type: application/json');
 const BITRIX_WEBHOOK_BASE = 'https://prue-dubai.bitrix24.ru/rest/1136/tnt0k89577f6vfcg/';
 const ENTITY_TYPE_ID     = 1120;
 
-// REAL field keys (case-sensitive!)
-const FIELD_START_DATE = 'ufCrm30_1767183075771';
-const FIELD_END_DATE   = 'ufCrm30_1767183196848';
-const FIELD_TOTAL_DAYS = 'ufCrm30_1767017263547';
+// System fields (IMPORTANT)
+const FIELD_BEGIN_DATE  = 'begindate';
+const FIELD_CLOSE_DATE  = 'closedate';
+
+// Target custom field
+const FIELD_TOTAL_DAYS  = 'ufCrm30_1767017263547';
 
 /**
  * ==============================
- * READ INPUT (BITRIX EVENT OR BROWSER)
+ * READ INPUT (EVENT OR BROWSER)
  * ==============================
  */
 $data = $_REQUEST['data'] ?? null;
@@ -65,20 +67,26 @@ $result = json_decode($response, true);
 $item = $result['result']['item'] ?? null;
 
 if (!$item) {
-    echo json_encode(['status' => 'error', 'reason' => 'item not found']);
+    echo json_encode([
+        'status' => 'error',
+        'reason' => 'item not found'
+    ]);
     exit;
 }
 
 /**
  * ==============================
- * READ DATES (CORRECT KEYS)
+ * READ DATES (SYSTEM FIELDS)
  * ==============================
  */
-$startRaw = $item[FIELD_START_DATE] ?? null;
-$endRaw   = $item[FIELD_END_DATE]   ?? null;
+$startRaw = $item[FIELD_BEGIN_DATE] ?? null;
+$endRaw   = $item[FIELD_CLOSE_DATE] ?? null;
 
 if (!$startRaw || !$endRaw) {
-    echo json_encode(['status' => 'ignored', 'reason' => 'dates missing']);
+    echo json_encode([
+        'status' => 'ignored',
+        'reason' => 'dates missing'
+    ]);
     exit;
 }
 
@@ -91,7 +99,9 @@ $startDate = DateTime::createFromFormat('Y-m-d', substr($startRaw, 0, 10));
 $endDate   = DateTime::createFromFormat('Y-m-d', substr($endRaw,   0, 10));
 
 if (!$startDate || !$endDate || $startDate > $endDate) {
-    echo json_encode(['status' => 'invalid dates']);
+    echo json_encode([
+        'status' => 'invalid dates'
+    ]);
     exit;
 }
 
