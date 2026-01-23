@@ -1,4 +1,9 @@
 <?php
+file_put_contents(
+    __DIR__ . '/hook.log',
+    date('c') . ' ' . json_encode($_REQUEST) . PHP_EOL,
+    FILE_APPEND
+);
 declare(strict_types=1);
 
 header('Content-Type: application/json');
@@ -86,3 +91,4 @@ echo json_encode([
     'working_days' => $workingDays,
     'received'     => $_REQUEST
 ]);
+
