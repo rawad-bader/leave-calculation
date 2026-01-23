@@ -3,61 +3,45 @@ declare(strict_types=1);
 
 header('Content-Type: application/json');
 
-/**
- * ==============================
- * CONFIGURATION
- * ==============================
- */
+/* ==============================
+   CONFIG
+================================ */
 const BITRIX_WEBHOOK_BASE = 'https://prue-dubai.bitrix24.ru/rest/1136/tnt0k89577f6vfcg/';
-const ENTITY_TYPE_ID     = 1120;
+const ENTITY_TYPE_ID = 1120;
 
-// System fields (IMPORTANT)
-const FIELD_BEGIN_DATE  = 'begindate';
-const FIELD_CLOSE_DATE  = 'closedate';
+// Source fields
+const FIELD_START_DATE   = 'UF_CRM_30_1767183075771';
+const FIELD_END_DATE     = 'UF_CRM_30_1767183196848';
+const FIELD_LEAVE_BAL    = 'UF_CRM_30_1767791217511';
 
-// Target custom field
-const FIELD_TOTAL_DAYS  = 'ufCrm30_1767017263547';
+// Target fields
+const FIELD_TOTAL_DAYS   = 'ufCrm30_1767017263547';
+const FIELD_REMAINING    = 'ufCrm30_1767791545080';
 
-/**
- * ==============================
- * READ INPUT (EVENT OR BROWSER)
- * ==============================
- */
-$data = $_REQUEST['data'] ?? null;
+/* ==============================
+   INPUT (BP or Browser)
+================================ */
+$itemId = (int)($_REQUEST['ID'] ?? 0);
 
-if ($data) {
-    $itemId       = (int)($data['ID'] ?? 0);
-    $entityTypeId = (int)($data['ENTITY_TYPE_ID'] ?? 0);
-} else {
-    $itemId       = (int)($_REQUEST['ID'] ?? 0);
-    $entityTypeId = (int)($_REQUEST['ENTITY_TYPE_ID'] ?? 0);
-}
-
-if ($itemId <= 0 || $entityTypeId !== ENTITY_TYPE_ID) {
-    echo json_encode([
-        'status' => 'ignored',
-        'reason' => 'invalid item or entity'
-    ]);
+if ($itemId <= 0) {
+    echo json_encode(['status' => 'ignored', 'reason' => 'missing ID']);
     exit;
 }
 
-/**
- * ==============================
- * FETCH FULL ITEM
- * ==============================
- */
+/* ==============================
+   FETCH ITEM
+================================ */
 $getUrl = BITRIX_WEBHOOK_BASE . 'crm.item.get.json';
 
 $ch = curl_init($getUrl);
 curl_setopt_array($ch, [
-    CURLOPT_POST           => true,
+    CURLOPT_POST => true,
     CURLOPT_RETURNTRANSFER => true,
-    CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
-    CURLOPT_POSTFIELDS     => json_encode([
+    CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+    CURLOPT_POSTFIELDS => json_encode([
         'entityTypeId' => ENTITY_TYPE_ID,
         'id' => $itemId
-    ]),
-    CURLOPT_TIMEOUT => 10
+    ])
 ]);
 
 $response = curl_exec($ch);
@@ -67,49 +51,36 @@ $result = json_decode($response, true);
 $item = $result['result']['item'] ?? null;
 
 if (!$item) {
-    echo json_encode([
-        'status' => 'error',
-        'reason' => 'item not found'
-    ]);
+    echo json_encode(['status' => 'error', 'reason' => 'item not found']);
     exit;
 }
 
-/**
- * ==============================
- * READ DATES (SYSTEM FIELDS)
- * ==============================
- */
-$startRaw = $item[FIELD_BEGIN_DATE] ?? null;
-$endRaw   = $item[FIELD_CLOSE_DATE] ?? null;
+/* ==============================
+   READ VALUES
+================================ */
+$startRaw = $item[FIELD_START_DATE] ?? null;
+$endRaw   = $item[FIELD_END_DATE] ?? null;
+$balance  = (int)($item[FIELD_LEAVE_BAL] ?? 0);
 
 if (!$startRaw || !$endRaw) {
-    echo json_encode([
-        'status' => 'ignored',
-        'reason' => 'dates missing'
-    ]);
+    echo json_encode(['status' => 'ignored', 'reason' => 'dates missing']);
     exit;
 }
 
-/**
- * ==============================
- * PARSE BITRIX DATE FORMAT
- * ==============================
- */
+/* ==============================
+   PARSE DATES
+================================ */
 $startDate = DateTime::createFromFormat('Y-m-d', substr($startRaw, 0, 10));
-$endDate   = DateTime::createFromFormat('Y-m-d', substr($endRaw,   0, 10));
+$endDate   = DateTime::createFromFormat('Y-m-d', substr($endRaw, 0, 10));
 
 if (!$startDate || !$endDate || $startDate > $endDate) {
-    echo json_encode([
-        'status' => 'invalid dates'
-    ]);
+    echo json_encode(['status' => 'error', 'reason' => 'invalid dates']);
     exit;
 }
 
-/**
- * ==============================
- * CALCULATE WORKING DAYS (Mon–Fri)
- * ==============================
- */
+/* ==============================
+   CALCULATE WORKING DAYS
+================================ */
 $workingDays = 0;
 $cursor = clone $startDate;
 
@@ -120,51 +91,40 @@ while ($cursor <= $endDate) {
     $cursor->modify('+1 day');
 }
 
-/**
- * ==============================
- * LOOP PROTECTION
- * ==============================
- */
-if ((int)($item[FIELD_TOTAL_DAYS] ?? 0) === $workingDays) {
-    echo json_encode([
-        'status' => 'skipped',
-        'working_days' => $workingDays
-    ]);
-    exit;
-}
+/* ==============================
+   CALCULATE REMAINING BALANCE
+================================ */
+$remaining = max(0, $balance - $workingDays);
 
-/**
- * ==============================
- * UPDATE ITEM
- * ==============================
- */
+/* ==============================
+   UPDATE ITEM (ONE CALL)
+================================ */
 $updateUrl = BITRIX_WEBHOOK_BASE . 'crm.item.update.json';
 
 $ch = curl_init($updateUrl);
 curl_setopt_array($ch, [
-    CURLOPT_POST           => true,
+    CURLOPT_POST => true,
     CURLOPT_RETURNTRANSFER => true,
-    CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
-    CURLOPT_POSTFIELDS     => json_encode([
+    CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+    CURLOPT_POSTFIELDS => json_encode([
         'entityTypeId' => ENTITY_TYPE_ID,
         'id' => $itemId,
         'fields' => [
-            FIELD_TOTAL_DAYS => $workingDays
+            FIELD_TOTAL_DAYS => $workingDays,
+            FIELD_REMAINING  => $remaining
         ]
-    ]),
-    CURLOPT_TIMEOUT => 10
+    ])
 ]);
 
 curl_exec($ch);
 curl_close($ch);
 
-/**
- * ==============================
- * SUCCESS
- * ==============================
- */
+/* ==============================
+   SUCCESS
+================================ */
 echo json_encode([
     'status' => 'success',
     'item_id' => $itemId,
-    'working_days' => $workingDays
+    'working_days' => $workingDays,
+    'remaining_balance' => $remaining
 ]);
