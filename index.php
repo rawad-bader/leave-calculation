@@ -10,15 +10,12 @@ const BITRIX_WEBHOOK_BASE = 'https://prue-dubai.bitrix24.ru/rest/1136/tnt0k89577
 const ENTITY_TYPE_ID     = 1120;
 
 /* =====================================================
-   SOURCE FIELDS (READ FROM ITEM)
+   FIELD IDS (EXACT – FROM YOUR SCREENSHOT)
 ===================================================== */
 const FIELD_START_DATE   = 'UF_CRM_30_1767183075771'; // Start Date
 const FIELD_END_DATE     = 'UF_CRM_30_1767183196848'; // End Date
 const FIELD_LEAVE_BAL    = 'UF_CRM_30_1767791217511'; // Leave Balance
 
-/* =====================================================
-   TARGET FIELDS (WRITE TO ITEM)
-===================================================== */
 const FIELD_TOTAL_DAYS   = 'UF_CRM_30_1767017263547'; // Total Number of Leave Days
 const FIELD_REMAINING    = 'UF_CRM_30_1767791545080'; // Remaining Leave Balance
 
@@ -33,7 +30,7 @@ if ($itemId <= 0) {
 }
 
 /* =====================================================
-   FETCH ITEM
+   FETCH ITEM FROM BITRIX
 ===================================================== */
 $getUrl = BITRIX_WEBHOOK_BASE . 'crm.item.get.json';
 
@@ -55,26 +52,44 @@ $data = json_decode($response, true);
 $item = $data['result']['item'] ?? null;
 
 if (!$item) {
-    echo json_encode(['status' => 'error', 'reason' => 'item not found']);
+    echo json_encode([
+        'status' => 'error',
+        'reason' => 'item not found',
+        'raw_response' => $data
+    ]);
     exit;
 }
 
 /* =====================================================
-   READ VALUES
+   HARD DEBUG — STOP HERE
+   (THIS WILL PROVE THE ROOT CAUSE)
 ===================================================== */
 $startRaw = $item[FIELD_START_DATE] ?? null;
 $endRaw   = $item[FIELD_END_DATE] ?? null;
-$balance  = (int)($item[FIELD_LEAVE_BAL] ?? 0);
+$balance  = $item[FIELD_LEAVE_BAL] ?? null;
 
+echo json_encode([
+    'DEBUG' => true,
+    'item_id' => $itemId,
+    'entityTypeId' => ENTITY_TYPE_ID,
+    'start_field_id' => FIELD_START_DATE,
+    'end_field_id' => FIELD_END_DATE,
+    'start_value' => $startRaw,
+    'end_value' => $endRaw,
+    'leave_balance' => $balance,
+    'item_keys_sample' => array_slice(array_keys($item), 0, 50),
+]);
+exit;
+
+/* =====================================================
+   THE CODE BELOW WILL NOT RUN UNTIL DEBUG IS REMOVED
+===================================================== */
+
+/* =====================================================
+   VALIDATE DATES
+===================================================== */
 if (!$startRaw || !$endRaw) {
-    echo json_encode([
-        'status' => 'ignored',
-        'reason' => 'dates missing',
-        'debug'  => [
-            'start' => $startRaw,
-            'end'   => $endRaw
-        ]
-    ]);
+    echo json_encode(['status' => 'ignored', 'reason' => 'dates missing']);
     exit;
 }
 
@@ -90,7 +105,7 @@ if (!$startDate || !$endDate || $startDate > $endDate) {
 }
 
 /* =====================================================
-   CALCULATE WORKING DAYS (Mon–Fri)
+   CALCULATE WORKING DAYS
 ===================================================== */
 $workingDays = 0;
 $cursor = clone $startDate;
@@ -105,10 +120,10 @@ while ($cursor <= $endDate) {
 /* =====================================================
    CALCULATE REMAINING BALANCE
 ===================================================== */
-$remaining = max(0, $balance - $workingDays);
+$remaining = max(0, (int)$balance - $workingDays);
 
 /* =====================================================
-   UPDATE ITEM (SINGLE CALL)
+   UPDATE ITEM
 ===================================================== */
 $updateUrl = BITRIX_WEBHOOK_BASE . 'crm.item.update.json';
 
@@ -127,16 +142,12 @@ curl_setopt_array($ch, [
     ])
 ]);
 
-$updateResponse = curl_exec($ch);
+curl_exec($ch);
 curl_close($ch);
 
-/* =====================================================
-   SUCCESS RESPONSE
-===================================================== */
 echo json_encode([
-    'status'             => 'success',
-    'item_id'            => $itemId,
-    'working_days'       => $workingDays,
-    'original_balance'   => $balance,
+    'status' => 'success',
+    'item_id' => $itemId,
+    'working_days' => $workingDays,
     'remaining_balance' => $remaining
 ]);
