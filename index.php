@@ -72,4 +72,22 @@ if (!$item) {
  * ==============================
  * DEBUG BLOCK — VERY IMPORTANT
  * ==============================
- * This shows the REAL field codes store*
+ * This shows the REAL field codes stored on the item
+ * Copy the date field codes from this output
+ */
+echo json_encode([
+    'status' => 'DEBUG_MODE',
+    'item_id' => $itemId,
+    'item_keys' => array_keys($item),
+    'item_values' => $item
+], JSON_PRETTY_PRINT);
+exit;
+
+/**
+ * =====================================================
+ * THE CODE BELOW IS DISABLED TEMPORARILY (BY DESIGN)
+ * =====================================================
+ * Once we identify the real field codes, we will:
+ * 1. Remove the debug block above
+ * 2. Enable the calculation logic
+ */
