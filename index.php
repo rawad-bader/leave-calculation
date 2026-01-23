@@ -1,58 +1,70 @@
 <?php
-file_put_contents(
-    __DIR__ . '/hook.log',
-    date('c') . ' ' . json_encode($_REQUEST) . PHP_EOL,
-    FILE_APPEND
-);
 declare(strict_types=1);
 
 header('Content-Type: application/json');
 
-/* ==============================
-   CONFIG
-   ============================== */
-const BITRIX_WEBHOOK_BASE =
-    'https://prue-dubai.bitrix24.ru/rest/1136/tnt0k89577f6vfcg/';
-const ENTITY_TYPE_ID = 1120;
-const TARGET_FIELD  = 'UF_CRM_30_1767017263547';
+/**
+ * ==============================
+ * CONFIGURATION
+ * ==============================
+ */
+const BITRIX_WEBHOOK_BASE = 'https://prue-dubai.bitrix24.ru/rest/1136/tnt0k89577f6vfcg/';
+const ENTITY_TYPE_ID     = 1120;
 
-/* ==============================
-   INPUT (Bitrix sends REQUEST vars)
-   ============================== */
-$startRaw = $_REQUEST['start_date'] ?? null;
-$endRaw   = $_REQUEST['end_date'] ?? null;
-$itemId   = isset($_REQUEST['item_id']) ? (int)$_REQUEST['item_id'] : 0;
+// Smart Process field codes
+const FIELD_START_DATE   = 'UF_CRM_30_1767183075771';
+const FIELD_END_DATE     = 'UF_CRM_30_1767183196848';
+const FIELD_TOTAL_DAYS   = 'UF_CRM_30_1767017263547';
 
-if (!$startRaw || !$endRaw || $itemId <= 0) {
-    http_response_code(400);
-    echo json_encode([
-        'error'    => 'Missing parameters',
-        'received' => $_REQUEST
-    ]);
-    exit;
+/**
+ * ==============================
+ * RECEIVE EVENT PAYLOAD
+ * ==============================
+ * Triggered by: ONCRMDYNAMICITEMUPDATE
+ */
+$data   = $_REQUEST['data']   ?? [];
+$fields = $data['FIELDS']     ?? [];
+
+// Validate entity
+if (($data['ENTITY_TYPE_ID'] ?? null) != ENTITY_TYPE_ID) {
+    exit(json_encode(['status' => 'ignored', 'reason' => 'not target entity']));
 }
 
-/* ==============================
-   DATE PARSING
-   ============================== */
-$startDate = DateTime::createFromFormat('d.m.Y', $startRaw);
-$endDate   = DateTime::createFromFormat('d.m.Y', $endRaw);
+// Validate item ID
+$itemId = (int)($data['ID'] ?? 0);
+if ($itemId <= 0) {
+    exit(json_encode(['status' => 'ignored', 'reason' => 'invalid item id']));
+}
+
+// Read required fields
+$startRaw = $fields[FIELD_START_DATE] ?? null;
+$endRaw   = $fields[FIELD_END_DATE]   ?? null;
+
+if (!$startRaw || !$endRaw) {
+    exit(json_encode(['status' => 'ignored', 'reason' => 'dates not set']));
+}
+
+/**
+ * ==============================
+ * PARSE BITRIX DATE FORMAT
+ * Example: 2026-01-23T00:00:00+03:00
+ * ==============================
+ */
+$startDate = DateTime::createFromFormat('Y-m-d', substr($startRaw, 0, 10));
+$endDate   = DateTime::createFromFormat('Y-m-d', substr($endRaw,   0, 10));
 
 if (!$startDate || !$endDate || $startDate > $endDate) {
-    http_response_code(400);
-    echo json_encode([
-        'error' => 'Invalid dates',
-        'start' => $startRaw,
-        'end'   => $endRaw
-    ]);
-    exit;
+    exit(json_encode(['status' => 'ignored', 'reason' => 'invalid dates']));
 }
 
-/* ==============================
-   CALCULATION
-   ============================== */
+/**
+ * ==============================
+ * CALCULATE WORKING DAYS (Mon–Fri)
+ * ==============================
+ */
 $workingDays = 0;
 $cursor = clone $startDate;
+
 while ($cursor <= $endDate) {
     if ((int)$cursor->format('N') <= 5) {
         $workingDays++;
@@ -60,35 +72,55 @@ while ($cursor <= $endDate) {
     $cursor->modify('+1 day');
 }
 
-/* ==============================
-   UPDATE BITRIX
-   ============================== */
+/**
+ * ==============================
+ * LOOP PROTECTION
+ * ==============================
+ * If value already set correctly, do nothing
+ */
+$currentValue = (int)($fields[FIELD_TOTAL_DAYS] ?? 0);
+if ($currentValue === $workingDays) {
+    exit(json_encode([
+        'status' => 'skipped',
+        'reason' => 'already calculated',
+        'working_days' => $workingDays
+    ]));
+}
+
+/**
+ * ==============================
+ * UPDATE SMART PROCESS ITEM
+ * ==============================
+ */
+$bitrixUrl = BITRIX_WEBHOOK_BASE . 'crm.item.update.json';
+
 $payload = [
     'entityTypeId' => ENTITY_TYPE_ID,
-    'id'           => $itemId,
-    'fields'       => [
-        TARGET_FIELD => $workingDays
+    'id' => $itemId,
+    'fields' => [
+        FIELD_TOTAL_DAYS => $workingDays
     ]
 ];
 
-$ch = curl_init(BITRIX_WEBHOOK_BASE . 'crm.item.update.json');
+$ch = curl_init($bitrixUrl);
 curl_setopt_array($ch, [
     CURLOPT_POST           => true,
     CURLOPT_RETURNTRANSFER => true,
     CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
     CURLOPT_POSTFIELDS     => json_encode($payload),
+    CURLOPT_TIMEOUT        => 10
 ]);
 
-$response = curl_exec($ch);
+curl_exec($ch);
 curl_close($ch);
 
-/* ==============================
-   RESPONSE
-   ============================== */
+/**
+ * ==============================
+ * SUCCESS
+ * ==============================
+ */
 echo json_encode([
-    'status'       => 'success',
-    'item_id'      => $itemId,
-    'working_days' => $workingDays,
-    'received'     => $_REQUEST
+    'status' => 'success',
+    'item_id' => $itemId,
+    'working_days' => $workingDays
 ]);
-
